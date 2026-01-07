@@ -14,13 +14,19 @@ from auth import (
     get_password_hash, 
     ACCESS_TOKEN_EXPIRE_MINUTES
 )
+from minio_client import minio_client, BUCKET_NAME
+from typing import List
 
 # --- NEW IMPORTS FOR EMBEDDINGS ---
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
-
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnablePassthrough
+from schemas import ChatRequest, GeneratedLessonResponse
 router = APIRouter()
 
 # --- 1. Setup Vector Store (Matches your script) ---
@@ -116,76 +122,100 @@ async def join_classroom(
     return classroom
 
 # --- Document & Vector Routes (UPDATED) ---
-
 @router.post("/classrooms/{classroom_id}/documents", response_model=DocumentResponse)
-async def upload_document_and_vectorize(
+def upload_document_and_vectorize(
     classroom_id: int,
     file: UploadFile = File(...),
     current_user: models.User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Uploads a file, splits it into chunks (like the script), 
-    generates embeddings using HuggingFace, and stores them in ChromaDB.
-    """
+    # 1️⃣ Authorization
     if current_user.role != "teacher":
-        raise HTTPException(status_code=403, detail="Only teachers can upload documents")
-    
-    classroom = db.query(models.Classroom).filter(models.Classroom.id == classroom_id).first()
-    if not classroom or classroom.teacher_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Classroom not found or unauthorized")
+        raise HTTPException(status_code=403, detail="Only teachers can upload")
 
-    # 1. Save File Temporarily (LangChain loaders need a file path)
-    temp_filename = f"temp_{file.filename}"
-    with open(temp_filename, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    classroom = db.query(models.Classroom).filter_by(
+        id=classroom_id,
+        teacher_id=current_user.id
+    ).first()
+
+    if not classroom:
+        raise HTTPException(status_code=404, detail="Unauthorized")
+
+    # 2️⃣ Create DB record FIRST
+    doc = models.Document(
+        filename=file.filename,
+        mime_type=file.content_type,
+        file_size=0,
+        bucket_name=BUCKET_NAME,
+        storage_path="",  # fill later
+        classroom_id=classroom_id,
+        uploaded_by=current_user.id
+    )
+
+    db.add(doc)
+    db.commit()
+    db.refresh(doc)
+
+    # 3️⃣ Upload file to MinIO
+    object_path = (
+        f"classroom_{classroom_id}/documents/"
+        f"document_{doc.id}/original_{file.filename}"
+    )
+
+    minio_client.put_object(
+        bucket_name=BUCKET_NAME,
+        object_name=object_path,
+        data=file.file,
+        length=-1,
+        part_size=10 * 1024 * 1024
+    )
+
+    # 4️⃣ Save MinIO path in DB
+    doc.storage_path = object_path
+    db.commit()
+
+    # 5️⃣ Download from MinIO temporarily for embedding
+    temp_filename = f"temp_{doc.id}_{file.filename}"
+
+    with open(temp_filename, "wb") as temp_file:
+        response = minio_client.get_object(BUCKET_NAME, object_path)
+        for chunk in response.stream(32 * 1024):
+            temp_file.write(chunk)
 
     try:
-        # 2. Load the Document
-        documents = []
-        if temp_filename.endswith(".pdf"):
+        # 6️⃣ Load document
+        if file.filename.endswith(".pdf"):
             loader = PyPDFLoader(temp_filename)
-            documents = loader.load()
         else:
-            # Simple text loader fallback
-            loader = TextLoader(temp_filename, encoding='utf-8')
-            documents = loader.load()
+            loader = TextLoader(temp_filename, encoding="utf-8")
 
-        # 3. Create Database Record (Postgres)
-        # We store a short snippet or just a placeholder in Postgres
-        new_doc = models.Document(
-            filename=file.filename,
-            content=f"Processed {len(documents)} pages.", 
-            classroom_id=classroom_id
-        )
-        db.add(new_doc)
-        db.commit()
-        db.refresh(new_doc)
+        documents = loader.load()
 
-        # 4. Split Text (Chunks)
-        text_splitter = RecursiveCharacterTextSplitter(
+        # 7️⃣ Split into chunks
+        splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
             chunk_overlap=200
         )
-        chunks = text_splitter.split_documents(documents)
+        chunks = splitter.split_documents(documents)
 
-        # 5. Add Metadata to Chunks (Link to Postgres ID)
+        # 8️⃣ Add metadata
         for chunk in chunks:
-            chunk.metadata["document_id"] = new_doc.id
-            chunk.metadata["classroom_id"] = classroom_id
-            chunk.metadata["filename"] = file.filename
+            chunk.metadata = {
+                "document_id": doc.id,
+                "classroom_id": classroom_id,
+                "filename": file.filename
+            }
 
-        # 6. Store in ChromaDB
-        # This uses the 'all-MiniLM-L6-v2' model defined globally
+        # 9️⃣ Store in ChromaDB
         vector_store.add_documents(chunks)
-        
-        return new_doc
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
-    
+        doc.is_processed = True
+        db.commit()
+
+        return doc
+
     finally:
-        # 7. Cleanup Temp File
+        # 🔟 Cleanup temp file
         if os.path.exists(temp_filename):
             os.remove(temp_filename)
 
@@ -214,3 +244,151 @@ async def get_document_vectors_status(
         "chunk_count": count,
         "message": "Vectors are stored in ChromaDB and ready for RAG retrieval."
     }
+@router.post("/chat/generate_lesson", response_model=GeneratedLessonResponse)
+async def generate_and_store_lesson(
+    request: ChatRequest,
+    current_user: models.User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    # ... (API Key check and LLM setup remain the same) ...
+    google_api_key = os.getenv("AI_API_KEY")
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-2.5-flash-lite",
+        google_api_key=google_api_key,
+        temperature=0.4
+    )
+
+    # --- THE FIX: ADD SEARCH KWARGS WITH FILTER ---
+    retriever = vector_store.as_retriever(
+        search_kwargs={
+            "k": 4,
+            "filter": {"classroom_id": request.classroom_id}  # <--- This enforces the scope
+        }
+    )
+    
+    # ... (The rest of the Prompt and Chain code remains exactly the same) ...
+    
+    template = """
+    You are an expert teacher creating a personalized lesson plan.
+    
+    Student Details:
+    - Name: {name}
+    - Grade Level: {grade}
+    - Personal Interest/Hobby: {interest}
+    
+    The Lesson Topic is: {topic}
+    
+    Use the following educational content (Context) to answer the student's question. 
+    Explain the concept using analogies related to their interest ({interest}) to make it engaging.
+    
+    Context:
+    {context}
+    
+    Student's Question:
+    {question}
+    
+    Answer:
+    """
+    
+    prompt = ChatPromptTemplate.from_template(template)
+
+    # The rest of your chain code is correct:
+    chain = (
+        {
+            "context": retriever, 
+            "question": RunnablePassthrough(), 
+            "name": lambda x: request.student_name, 
+            "interest": lambda x: request.student_interest, 
+            "grade": lambda x: request.student_grade, 
+            "topic": lambda x: request.topic
+        }
+        | prompt
+        | llm
+        | StrOutputParser()
+    )
+
+    try:
+        # Check if the user is actually IN this classroom (Security Check)
+        # (Optional but recommended)
+        student_in_class = db.query(models.classroom_students).filter_by(
+            user_id=current_user.id, 
+            classroom_id=request.classroom_id
+        ).first()
+        
+        if not student_in_class:
+             raise HTTPException(status_code=403, detail="You are not enrolled in this classroom.")
+
+        generated_content = chain.invoke(request.question)
+        
+        new_lesson = models.GeneratedLesson(
+            topic=request.topic,
+            content=generated_content,
+            student_id=current_user.id
+        )
+        
+        db.add(new_lesson)
+        db.commit()
+        db.refresh(new_lesson)
+        
+        return new_lesson
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Generation failed: {str(e)}")
+@router.get("/chat/lessons", response_model=List[GeneratedLessonResponse])
+async def get_student_lessons(
+    current_user: models.User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Retrieve history of generated lessons for the current user."""
+    return db.query(models.GeneratedLesson).filter(
+        models.GeneratedLesson.student_id == current_user.id
+    ).all()
+
+@router.get("/chat/lessons/{lesson_id}", response_model=GeneratedLessonResponse)
+async def get_lesson_detail(
+    lesson_id: int,
+    current_user: models.User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Retrieve a specific lesson."""
+    lesson = db.query(models.GeneratedLesson).filter(
+        models.GeneratedLesson.id == lesson_id,
+        models.GeneratedLesson.student_id == current_user.id
+    ).first()
+    
+    if not lesson:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+    return lesson
+
+# ==========================================
+#      DOCUMENT DOWNLOAD ROUTES
+# ==========================================
+
+@router.get("/documents/{document_id}/download")
+async def download_original_document(
+    document_id: int,
+    current_user: models.User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Downloads the original file from MinIO.
+    """
+    # 1. Get Document Info
+    document = db.query(models.Document).filter(models.Document.id == document_id).first()
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    # 2. Check Permissions (Optional: Check if user is in the classroom)
+    # For now, we assume if they are logged in, they can access (expand logic as needed)
+    
+    # 3. Stream from MinIO
+    try:
+        response = minio_client.get_object(document.bucket_name, document.storage_path)
+        
+        return StreamingResponse(
+            response.stream(32 * 1024),
+            media_type=document.mime_type or "application/octet-stream",
+            headers={"Content-Disposition": f'attachment; filename="{document.filename}"'}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"File retrieval error: {str(e)}")
