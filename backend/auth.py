@@ -1,3 +1,4 @@
+# backend/auth.py
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from fastapi import Depends, HTTPException, status
@@ -9,8 +10,10 @@ import os
 # Import from your other files
 from sqlalchemy.orm import Session
 from database import get_db
-from schemas import TokenData, User, UserInDB
+# 1. Removed UserInDB from this import
+from schemas import TokenData, User 
 import models
+
 load_dotenv()
 SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = "HS256"
@@ -68,7 +71,8 @@ async def get_current_user(token: str = Depends(oauth_2_scheme), db: Session = D
         raise credential_exception
     return user
 
-async def get_current_active_user(current_user: UserInDB = Depends(get_current_user)):
+# 2. Changed type hint from UserInDB to models.User
+async def get_current_active_user(current_user: models.User = Depends(get_current_user)):
     if current_user.disabled:
         raise HTTPException(status_code=400, detail="Inactive User")
     return current_user
