@@ -20,7 +20,13 @@ export default function App() {
       );
 
     if (page === "login")
-      return <Login onSuccess={setUser} />;
+      return (
+        <Login
+          onSuccess={setUser}
+          onSignupClick={() => setPage("signup")}
+          onBack={() => setPage("landing")}
+        />
+      );
 
     if (page === "signup")
       return <Signup onBack={() => setPage("landing")} />;

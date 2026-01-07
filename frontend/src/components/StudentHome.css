@@ -1,3 +1,68 @@
-.home-card.student {
-  border-left: 5px solid #2ecc71;
+.section-container {
+  background: white;
+  padding: 2rem;
+  border-radius: 8px;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+  margin-top: 1rem;
+}
+
+.back-btn {
+  background: none;
+  border: none;
+  color: #666;
+  cursor: pointer;
+  margin-bottom: 1rem;
+  font-size: 1rem;
+}
+
+.join-section {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.chat-form {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.form-row {
+  display: flex;
+  gap: 15px;
+}
+
+.form-row input, .form-row select {
+  flex: 1;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
+
+.full-width {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
+
+textarea {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  resize: vertical;
+}
+
+.response-card {
+  margin-top: 20px;
+  padding: 20px;
+  background: #f0f9ff;
+  border-left: 5px solid #007bff;
+  border-radius: 4px;
+}
+
+.error {
+  color: red;
+  margin-top: 10px;
 }

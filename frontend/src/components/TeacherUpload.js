@@ -1,9 +1,34 @@
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
 import "./TeacherUpload.css";
 
 export default function TeacherUpload() {
   const fileInputRef = useRef(null);
   const [file, setFile] = useState(null);
+  const [classrooms, setClassrooms] = useState([]); // Store list of classrooms
+  const [selectedClassroomId, setSelectedClassroomId] = useState(""); // Store selected ID
+
+  // 1. Fetch Classrooms on Component Mount
+  useEffect(() => {
+    async function fetchClassrooms() {
+      const token = localStorage.getItem("token");
+      try {
+        const response = await fetch("http://localhost:8000/classrooms/me", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setClassrooms(data);
+        } else {
+            console.error("Failed to fetch classrooms");
+        }
+      } catch (error) {
+        console.error("Error fetching classrooms:", error);
+      }
+    }
+    fetchClassrooms();
+  }, []);
 
   function openFilePicker() {
     fileInputRef.current.click();
@@ -13,26 +38,75 @@ export default function TeacherUpload() {
     setFile(e.target.files[0]);
   }
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
 
     if (!file) {
       alert("Please select a document first");
       return;
     }
+    
+    // 2. Validate Classroom Selection
+    if (!selectedClassroomId) {
+      alert("Please select a classroom to upload to.");
+      return;
+    }
 
-    alert(`Document "${file.name}" ready for upload`);
+    const token = localStorage.getItem("token");
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      // 3. Use the selected ID in the URL
+      const response = await fetch(
+        `http://localhost:8000/classrooms/${selectedClassroomId}/documents`, 
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          body: formData,
+        }
+      );
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || "Upload failed");
+      }
+
+      alert(`Document "${file.name}" uploaded successfully!`);
+      setFile(null);
+      // Optional: clear selection
+      // setSelectedClassroomId(""); 
+    } catch (error) {
+      console.error(error);
+      alert("Upload Error: " + error.message);
+    }
   }
 
   return (
     <div className="upload-wrapper">
       <h2>Upload Learning Material</h2>
       <p className="upload-subtitle">
-        Upload notes, PDFs, or text files to generate learning vectors
+        Select a classroom and upload files to generate learning vectors
       </p>
 
       <form onSubmit={handleSubmit} className="upload-card">
-        {/* Hidden File Input */}
+        {/* 4. Add Classroom Dropdown */}
+        <select 
+            className="classroom-select"
+            value={selectedClassroomId}
+            onChange={(e) => setSelectedClassroomId(e.target.value)}
+            required
+        >
+            <option value="" disabled>-- Select a Classroom --</option>
+            {classrooms.map((c) => (
+                <option key={c.id} value={c.id}>
+                    {c.name}
+                </option>
+            ))}
+        </select>
+
         <input
           type="file"
           ref={fileInputRef}
@@ -40,7 +114,6 @@ export default function TeacherUpload() {
           hidden
         />
 
-        {/* Upload Zone */}
         <div className="upload-zone" onClick={openFilePicker}>
           <div className="upload-content">
             <span className="upload-icon">📄</span>
@@ -49,10 +122,10 @@ export default function TeacherUpload() {
           </div>
         </div>
 
-        {/* Upload Button */}
         <button
           type="submit"
           className="btn-primary upload-btn"
+          disabled={!selectedClassroomId || !file} // Disable if invalid
         >
           Upload Document
         </button>

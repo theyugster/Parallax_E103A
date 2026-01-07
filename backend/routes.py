@@ -1,4 +1,3 @@
-Routes.py
 import shutil
 import os
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
@@ -485,3 +484,50 @@ async def personalize_entire_document(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Personalization failed: {str(e)}")
+@router.get("/classrooms/me", response_model=List[Classroom])
+async def get_my_classrooms(
+    current_user: models.User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    # Fetch all classrooms where the current user is the teacher
+    classrooms = db.query(models.Classroom).filter(
+        models.Classroom.teacher_id == current_user.id
+    ).all()
+    return classrooms
+@router.get("/classrooms/enrolled", response_model=List[Classroom])
+async def get_enrolled_classrooms(
+    current_user: models.User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    # SQLAlchemy magic: fetch classrooms linked to this student
+    return current_user.classrooms_enrolled
+
+@router.get("/classrooms/{classroom_id}/documents", response_model=List[DocumentResponse])
+async def get_classroom_documents(
+    classroom_id: int,
+    current_user: models.User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    # 1. Check if classroom exists
+    classroom = db.query(models.Classroom).filter(models.Classroom.id == classroom_id).first()
+    if not classroom:
+        raise HTTPException(status_code=404, detail="Classroom not found")
+        
+    # 2. Security: Ensure student is actually in this class (or is the teacher)
+    if current_user not in classroom.students and current_user.id != classroom.teacher_id:
+        raise HTTPException(status_code=403, detail="Not a member of this classroom")
+        
+    return classroom.documents
+@router.get("/classrooms/available", response_model=List[Classroom])
+async def get_available_classrooms(
+    current_user: models.User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    # Fetch all classrooms
+    all_classrooms = db.query(models.Classroom).all()
+    
+    # Filter out classrooms the user is already enrolled in
+    # (using the classrooms_enrolled relationship from models.py)
+    enrolled_ids = {c.id for c in current_user.classrooms_enrolled}
+    
+    return [c for c in all_classrooms if c.id not in enrolled_ids]
