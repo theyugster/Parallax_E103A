@@ -52,3 +52,22 @@ class DocumentResponse(BaseModel):
 class VectorResponse(BaseModel):
     id: int
     vector: List[float]
+class ChatRequest(BaseModel):
+    student_name: str
+    student_grade: str
+    student_interest: str
+    topic: str
+    question: str
+    classroom_id: int
+
+class GeneratedLessonResponse(BaseModel):
+    id: int
+    topic: str
+    content: str
+    student_id: int
+    
+    model_config = ConfigDict(from_attributes=True)
+class PersonalizeRequest(BaseModel):
+    student_interest: str
+    student_grade: str
+    student_name: str

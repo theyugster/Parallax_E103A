@@ -31,7 +31,7 @@ class User(Base):
     # Relationships
     classrooms_teaching = relationship("Classroom", back_populates="teacher")
     classrooms_enrolled = relationship("Classroom", secondary=classroom_students, back_populates="students")
-
+    generated_lessons = relationship("GeneratedLesson", back_populates="student")
 class Classroom(Base):
     __tablename__ = "classrooms"
     id = Column(Integer, primary_key=True, index=True)
@@ -41,14 +41,41 @@ class Classroom(Base):
 
     teacher = relationship("User", back_populates="classrooms_teaching")
     students = relationship("User", secondary=classroom_students, back_populates="classrooms_enrolled")
-    documents = relationship("Document", back_populates="classroom")
+    documents = relationship(
+    "Document",
+    back_populates="classroom",
+    cascade="all, delete-orphan"
+)
 
 class Document(Base):
     __tablename__ = "documents"
+
     id = Column(Integer, primary_key=True, index=True)
-    filename = Column(String)
-    content = Column(String) # Store text content
-    # Chromadb handles embeddings
-    classroom_id = Column(Integer, ForeignKey("classrooms.id"))
+
+    # File info
+    filename = Column(String, nullable=False)
+    mime_type = Column(String, nullable=True)
+    file_size = Column(Integer, nullable=True)
+
+    # MinIO storage info
+    bucket_name = Column(String, nullable=False)
+    storage_path = Column(String, nullable=False)
+    # example: classroom_3/documents/document_12/original.pdf
+
+    # Ownership
+    classroom_id = Column(Integer, ForeignKey("classrooms.id"), nullable=False)
+    uploaded_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+
+    # Processing status
+    is_processed = Column(Boolean, default=False)
 
     classroom = relationship("Classroom", back_populates="documents")
+class GeneratedLesson(Base):
+    __tablename__ = "generated_lessons"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    topic = Column(String, index=True)
+    content = Column(String) 
+    student_id = Column(Integer, ForeignKey("users.id"))
+    
+    student = relationship("User", back_populates="generated_lessons")
