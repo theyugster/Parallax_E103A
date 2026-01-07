@@ -1,10 +1,7 @@
-fastapi
-uvicorn
-sqlalchemy
-alembic
+streamlit
+langchain
+langchain-google-genai
+langchain-community
+chromadb
+pypdf
 python-dotenv
-bcrypt
-python-jose[cryptography]
-pydantic
-python-multipart
-psycopg2-binary
