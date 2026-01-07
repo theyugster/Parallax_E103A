@@ -48,8 +48,7 @@ class Document(Base):
     id = Column(Integer, primary_key=True, index=True)
     filename = Column(String)
     content = Column(String) # Store text content
-    # Store embeddings as an Array of Floats (Postgres specific)
-    embedding = Column(ARRAY(Float)) 
+    # Chromadb handles embeddings
     classroom_id = Column(Integer, ForeignKey("classrooms.id"))
 
     classroom = relationship("Classroom", back_populates="documents")
