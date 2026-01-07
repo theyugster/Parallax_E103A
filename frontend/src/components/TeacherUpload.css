@@ -1,0 +1,65 @@
+
+.upload-wrapper {
+  max-width: 700px;
+  margin: 50px auto;
+  padding: 20px;
+}
+
+.upload-wrapper h2 {
+  color: #2c3e50;
+  margin-bottom: 8px;
+}
+
+.upload-subtitle {
+  color: #64748b;
+  margin-bottom: 30px;
+  font-size: 0.95rem;
+}
+
+.upload-card {
+  background: white;
+  padding: 35px;
+  border-radius: 18px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.06);
+}
+
+.upload-zone {
+  display: block;
+  border: 2px dashed #cbd5e1;
+  border-radius: 14px;
+  padding: 40px;
+  text-align: center;
+  cursor: pointer;
+  background: #f8fafc;
+  transition: all 0.3s ease;
+}
+
+.upload-zone:hover {
+  border-color: #3498db;
+  background: #eef6fd;
+}
+
+.upload-content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+}
+
+.upload-icon {
+  font-size: 2.5rem;
+}
+
+.upload-content p {
+  font-weight: 600;
+  color: #34495e;
+}
+
+.upload-content small {
+  color: #94a3b8;
+}
+
+.upload-btn {
+  margin-top: 30px;
+  width: 100%;
+}

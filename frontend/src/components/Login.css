@@ -1,0 +1,54 @@
+.landing {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #3498db, #6dd5fa);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.hero {
+  background: white;
+  padding: 60px;
+  border-radius: 20px;
+  text-align: center;
+  width: 90%;
+  max-width: 480px;
+  box-shadow: 0 30px 60px rgba(0,0,0,0.15);
+}
+
+.hero h1 {
+  font-size: 2.6rem;
+  color: #3498db;
+  margin-bottom: 10px;
+}
+
+.hero p {
+  color: #64748b;
+  margin-bottom: 40px;
+}
+
+.hero-buttons {
+  display: flex;
+  gap: 20px;
+  justify-content: center;
+}
+
+.btn-primary {
+  background: #3498db;
+  color: white;
+  border: none;
+  padding: 14px 24px;
+  border-radius: 10px;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.btn-outline {
+  background: transparent;
+  border: 2px solid #3498db;
+  color: #3498db;
+  padding: 14px 24px;
+  border-radius: 10px;
+  font-size: 1rem;
+  cursor: pointer;
+}

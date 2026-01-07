@@ -1,0 +1,93 @@
+/* Signup.css */
+.auth-container {
+  max-width: 450px;
+  margin: 60px auto;
+  padding: 40px;
+  background-color: #ffffff;
+  border-radius: 16px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+  border: 1px solid #e1e8ed;
+  text-align: center;
+}
+
+.auth-container h3 {
+  color: #2c3e50;
+  font-size: 1.8rem;
+  margin-bottom: 8px;
+  font-weight: 700;
+}
+
+.auth-subtitle {
+  color: #7f8c8d;
+  margin-bottom: 30px;
+  font-size: 0.95rem;
+}
+
+.auth-input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  margin-bottom: 25px;
+}
+
+.auth-container input, 
+.auth-container select {
+  padding: 12px 16px;
+  border: 2px solid #f0f2f5;
+  border-radius: 10px;
+  font-size: 1rem;
+  background-color: #f8fafc;
+  transition: all 0.3s ease;
+}
+
+.auth-container input:focus, 
+.auth-container select:focus {
+  outline: none;
+  border-color: #3498db;
+  background-color: #ffffff;
+}
+
+.role-selector {
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.role-selector label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #34495e;
+  margin-left: 5px;
+}
+
+.btn-primary {
+  width: 100%;
+  padding: 14px;
+  background-color: #3498db;
+  color: white;
+  border: none;
+  border-radius: 10px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.3s ease;
+}
+
+.btn-primary:hover {
+  background-color: #2980b9;
+}
+
+.btn-secondary {
+  background: none;
+  border: none;
+  color: #7f8c8d;
+  margin-top: 20px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.btn-secondary:hover {
+  text-decoration: underline;
+  color: #2c3e50;
+}
