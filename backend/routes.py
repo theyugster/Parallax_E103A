@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from database import get_db         
 import models
 from schemas import Token, User, UserCreate, ClassroomCreate, Classroom, DocumentResponse, VectorResponse
+from schemas import PersonalizeRequest
 from auth import (
     authenticate_user, 
     create_access_token, 
@@ -392,3 +393,94 @@ async def download_original_document(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"File retrieval error: {str(e)}")
+@router.post("/documents/{document_id}/personalize", response_model=GeneratedLessonResponse)
+async def personalize_entire_document(
+    document_id: int,
+    request: PersonalizeRequest,
+    current_user: models.User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    # 1. Verify Document Access
+    doc = db.query(models.Document).filter(models.Document.id == document_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    # (Optional: Check if student is in the classroom of this doc)
+    # ...
+
+    # 2. Retrieve ALL chunks for this document from Chroma
+    # We filter by metadata "document_id" which we saved during upload
+    results = vector_store.get(
+        where={"document_id": document_id},
+        include=["documents"]  # We only need the text content
+    )
+
+    doc_texts = results.get("documents", [])
+    
+    if not doc_texts:
+        raise HTTPException(status_code=404, detail="No processed text found for this document")
+
+    # 3. Combine chunks into one large string
+    # Note: Depending on doc size, this might be large. 
+    # Gemini 1.5/2.5 Flash has a huge context window, so this usually works fine for standard chapters/PDFs.
+    full_text = "\n\n".join(doc_texts)
+
+    # 4. Setup LLM
+    google_api_key = os.getenv("AI_API_KEY")
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-2.5-flash-lite", # Ensure you use a model with large context
+        google_api_key=google_api_key,
+        temperature=0.5
+    )
+
+    # 5. Create the "Rewrite" Prompt
+    template = """
+    You are an expert educational content creator.
+    
+    Goal: Rewrite the following entire educational text to make it personalized for a student.
+    
+    Student Profile:
+    - Name: {name}
+    - Grade: {grade}
+    - Interest: {interest}
+    
+    Instructions:
+    1. Read the provided text below.
+    2. Rewrite the content to match the student's reading level ({grade}).
+    3. Explain the core concepts using analogies, metaphors, and examples related to their interest: "{interest}".
+    4. Maintain the original educational facts but change the tone and delivery style.
+    
+    Original Text:
+    {full_text}
+    
+    Personalized Version:
+    """
+
+    prompt = ChatPromptTemplate.from_template(template)
+
+    # 6. Execute Chain
+    chain = prompt | llm | StrOutputParser()
+
+    try:
+        generated_content = chain.invoke({
+            "name": request.student_name,
+            "grade": request.student_grade,
+            "interest": request.student_interest,
+            "full_text": full_text
+        })
+
+        # 7. Save and Return
+        new_lesson = models.GeneratedLesson(
+            topic=f"Full Rewrite: {doc.filename}",
+            content=generated_content,
+            student_id=current_user.id
+        )
+        
+        db.add(new_lesson)
+        db.commit()
+        db.refresh(new_lesson)
+        
+        return new_lesson
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Personalization failed: {str(e)}")
