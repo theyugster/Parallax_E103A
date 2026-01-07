@@ -5,3 +5,12 @@ langchain-community
 chromadb
 pypdf
 python-dotenv
+fastapi
+uvicorn
+sqlalchemy
+alembic
+bcrypt
+python-jose[cryptography]
+pydantic
+python-multipart
+psycopg2-binary
