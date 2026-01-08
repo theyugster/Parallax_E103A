@@ -1,11 +1,16 @@
 import shutil
-import os
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+import os,re,json
+import re
+from sqlalchemy.orm import subqueryload
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File,BackgroundTasks
 from fastapi.security import OAuth2PasswordRequestForm
 from datetime import timedelta
 from sqlalchemy.orm import Session  
 from database import get_db         
 import models
+import schemas
+import tempfile
+import shutil
 from schemas import Token, User, UserCreate, ClassroomCreate, Classroom, DocumentResponse, VectorResponse
 from schemas import PersonalizeRequest
 from auth import (
@@ -254,9 +259,9 @@ async def generate_and_store_lesson(
     # ... (API Key check and LLM setup remain the same) ...
     google_api_key = os.getenv("AI_API_KEY")
     llm = ChatGoogleGenerativeAI(
-        model="gemini-2.5-flash-lite",
-        google_api_key=google_api_key,
-        temperature=0.4
+        model="gemini-2.5-flash-lite",  # Or try "gemini-1.5-flash-latest"
+        google_api_key=api_key,
+        temperature=0.3, # Adding temperature helps with JSON consistency
     )
 
     # --- THE FIX: ADD SEARCH KWARGS WITH FILTER ---
@@ -531,3 +536,175 @@ async def get_available_classrooms(
     enrolled_ids = {c.id for c in current_user.classrooms_enrolled}
     
     return [c for c in all_classrooms if c.id not in enrolled_ids]
+
+#api endpoint for test generating 
+def safe_parse_json(text):
+    # 1. Clean up Markdown code blocks if present
+    text = text.strip()
+    if text.startswith("```"):
+        # Remove starting ```json or ```
+        text = re.sub(r'^```(?:json)?\n', '', text)
+        # Remove ending ```
+        text = re.sub(r'\n```$', '', text)
+    
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        print(f"JSON Parsing Error: {e} | Raw Text: {text}")
+        return []
+@router.post("/generate/{document_id}", response_model=schemas.TestResponse)
+async def generate_test(document_id: int, classroom_id: int, db: Session = Depends(get_db)):
+    doc = db.query(models.Document).filter(models.Document.id == document_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+    tmp_path = tmp.name
+    tmp.close() 
+
+    full_text = ""
+    try:
+        from minio_client import BUCKET_NAME as DEFAULT_BUCKET
+        minio_client.fget_object(
+            bucket_name=doc.bucket_name or DEFAULT_BUCKET,
+            object_name=doc.storage_path,
+            file_path=tmp_path
+        )
+        
+        loader = PyPDFLoader(tmp_path)
+        pages = loader.load()
+        full_text = " ".join([p.page_content for p in pages])
+        print(f"DEBUG: Extracted {len(full_text)} characters from PDF")
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"File Processing Error: {str(e)}")
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+    # FIX 1: Match the exact case in your .env file
+    api_key = os.getenv("AI_API_KEY") 
+    if not api_key:
+        raise HTTPException(status_code=500, detail="AI_API_KEY (Gemini Key) not found in environment")
+
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-2.5-flash-lite", 
+        google_api_key=api_key
+    )
+
+    new_test = models.Test(
+        title=f"Assessment: {doc.filename}", 
+        document_id=document_id, 
+        classroom_id=classroom_id
+    )
+    db.add(new_test)
+    db.commit()
+    db.refresh(new_test)
+
+    segments = [("Easy", 1), ("Medium", 2), ("Hard", 3)]
+    # Safety check for empty text
+    if not full_text:
+         raise HTTPException(status_code=400, detail="No text found in PDF")
+
+    chunk_size = len(full_text) // 3
+
+    for i, (diff, pts) in enumerate(segments):
+        start = i * chunk_size
+        end = start + chunk_size if i < 2 else len(full_text)
+        segment_text = full_text[start:end]
+
+        if not segment_text.strip(): continue
+
+        prompt = f"""
+        Generate 7 Multiple Choice Questions (Difficulty: {diff}).
+        You MUST return ONLY a valid JSON array. No conversational text or markdown.
+        Format:
+        [
+          {{
+            "question": "...",
+            "opt_a": "..", "opt_b": "..", "opt_c": "..", "opt_d": "..",
+            "answer": "A"
+          }}
+        ]
+        DOCUMENT CONTENT: {segment_text[:8000]}
+        """
+        
+        try:
+            response = llm.invoke(prompt)
+            questions_data = safe_parse_json(response.content)
+
+            for q in questions_data:
+                # Ensure we have the basic fields before adding
+                if 'question' in q:
+                    db_q = models.TestQuestion(
+                        test_id=new_test.id,
+                        question_text=q.get('question'),
+                        options=[q.get('opt_a'), q.get('opt_b'), q.get('opt_c'), q.get('opt_d')],
+                        correct_answer=q.get('answer'),
+                        difficulty=diff,
+                        points=pts
+                    )
+                    db.add(db_q)
+            db.commit() # Commit each segment
+        except Exception as e:
+            print(f"Error in segment {diff}: {e}")
+
+    # FIX 2: Re-fetch the test with questions loaded so they appear in the JSON response
+    final_test = db.query(models.Test)\
+        .options(subqueryload(models.Test.questions))\
+        .filter(models.Test.id == new_test.id)\
+        .first()
+
+    return final_test
+
+@router.post("/submit-test/{test_id}", response_model=schemas.TestResultResponse)
+async def submit_test(test_id: int, submission: schemas.TestSubmission, db: Session = Depends(get_db)):
+    # 1. Fetch only questions belonging to this topic/test
+    questions = db.query(models.TestQuestion).filter(models.TestQuestion.test_id == test_id).all()
+    if not questions:
+        raise HTTPException(status_code=404, detail="No questions found for this topic.")
+
+    # 2. Evaluation Setup
+    score = 0
+    total_pts = sum(q.points for q in questions)
+    perf_stats = {"Easy": {"got": 0, "total": 0}, "Medium": {"got": 0, "total": 0}, "Hard": {"got": 0, "total": 0}}
+    
+    q_dict = {q.id: q for q in questions}
+
+    # 3. Grade the Submission
+    for q_id_str, selected_opt in submission.answers.items():
+        q_id = int(q_id_str)
+        if q_id in q_dict:
+            question = q_dict[q_id]
+            perf_stats[question.difficulty]["total"] += question.points
+            if selected_opt.upper() == question.correct_answer.upper():
+                score += question.points
+                perf_stats[question.difficulty]["got"] += question.points
+
+    # 4. Predict Level Logic
+    percent = (score / total_pts * 100) if total_pts > 0 else 0
+    
+    # Advanced: >75% overall AND >60% on Hard questions
+    hard_ratio = perf_stats["Hard"]["got"] / perf_stats["Hard"]["total"] if perf_stats["Hard"]["total"] > 0 else 0
+    
+    if percent >= 80 and hard_ratio >= 0.6:
+        level = "Advanced"
+    elif percent >= 50:
+        level = "Intermediate"
+    else:
+        level = "Beginner"
+
+    # 5. Save to Database
+    result_entry = models.TestResult(
+        test_id=test_id,
+        student_id=submission.student_id,
+        score=score,
+        total_questions=len(questions),
+        percentage=round(percent, 2),
+        predicted_level=level
+    )
+    db.add(result_entry)
+    db.commit()
+    db.refresh(result_entry)
+
+    return result_entry

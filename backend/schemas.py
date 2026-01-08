@@ -1,8 +1,8 @@
 # backend/schemas.py
 from pydantic import BaseModel, ConfigDict
-from typing import List, Optional, Any
+from typing import List, Optional, Any,Dict
 from enum import Enum
-
+from datetime import datetime  
 class UserRole(str, Enum):
     TEACHER = "teacher"
     STUDENT = "student"
@@ -71,3 +71,38 @@ class PersonalizeRequest(BaseModel):
     student_interest: str
     student_grade: str
     student_name: str
+
+class TestQuestionResponse(BaseModel):
+    id: int
+    question_text: str
+    options: List[str]
+    difficulty: str
+    points: int
+    class Config:
+        from_attributes = True
+
+class TestResponse(BaseModel):
+    id: int
+    title: str
+    document_id: int
+    questions: List[TestQuestionResponse]
+    class Config:
+        from_attributes = True
+
+class TestSubmission(BaseModel):
+    student_id: int
+    # Format: {"question_id": "Selected_Option"} -> {"1": "A", "2": "C"}
+    answers: Dict[str, str]
+
+class TestResultResponse(BaseModel):
+    id: int
+    test_id: int
+    student_id: int
+    score: int
+    total_questions: int
+    percentage: float
+    predicted_level: str
+    created_at: datetime
+
+    # This is required to bridge SQLAlchemy models to Pydantic
+    model_config = ConfigDict(from_attributes=True)
