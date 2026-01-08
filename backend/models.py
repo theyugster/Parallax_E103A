@@ -3,6 +3,8 @@ from sqlalchemy import Boolean, Column, Integer, String, ForeignKey, Table, Floa
 from sqlalchemy.orm import relationship
 from database import Base
 import enum
+from sqlalchemy import DateTime # Make sure to import DateTime
+from datetime import datetime
 
 # Define Enum for Roles
 class UserRole(str, enum.Enum):
@@ -32,6 +34,7 @@ class User(Base):
     classrooms_teaching = relationship("Classroom", back_populates="teacher")
     classrooms_enrolled = relationship("Classroom", secondary=classroom_students, back_populates="students")
     generated_lessons = relationship("GeneratedLesson", back_populates="student")
+    videos = relationship("GeneratedVideo", back_populates="user")
 class Classroom(Base):
     __tablename__ = "classrooms"
     id = Column(Integer, primary_key=True, index=True)
@@ -79,3 +82,17 @@ class GeneratedLesson(Base):
     student_id = Column(Integer, ForeignKey("users.id"))
     
     student = relationship("User", back_populates="generated_lessons")
+class GeneratedVideo(Base):
+    __tablename__ = "generated_videos"
+
+    id = Column(Integer, primary_key=True, index=True)
+    job_id = Column(String, unique=True, index=True)
+    topic = Column(String) 
+    status = Column(String, default="queued") # queued, processing, completed, failed
+    minio_path = Column(String, nullable=True) # Stores "generated_videos/xyz.mp4"
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    user_id = Column(Integer, ForeignKey("users.id"))
+    
+    # Add relationship to User
+    user = relationship("User", back_populates="videos")

@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import "./StudentHome.css";
+import VideoGenerator from "./VideoGenerator"; // <--- Import here
 
 export default function StudentHome({ user }) {
   const [availableClassrooms, setAvailableClassrooms] = useState([]);
@@ -38,222 +39,200 @@ export default function StudentHome({ user }) {
         if (resEnrolled.ok) setEnrolledClassrooms(await resEnrolled.json());
 
       } catch (err) {
-        console.error("Failed to load data", err);
+        console.error("Failed to load student data", err);
       }
     }
     fetchData();
   }, []);
 
-  // 2. Fetch Documents when a Classroom is selected in Smart Learning
+  // 2. Fetch Documents when Classroom is Selected
   useEffect(() => {
-    async function fetchDocs() {
-      if (!learningData.classroom_id) {
-        setClassroomDocs([]);
-        return;
-      }
-      try {
+    if (learningData.classroom_id) {
         const token = localStorage.getItem("token");
-        const res = await fetch(`http://localhost:8000/classrooms/${learningData.classroom_id}/documents`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (res.ok) {
-          setClassroomDocs(await res.json());
-        }
-      } catch (err) {
-        console.error("Failed to load documents", err);
-      }
+        fetch(`http://localhost:8000/classrooms/${learningData.classroom_id}/documents`, {
+            headers: { Authorization: `Bearer ${token}` }
+        })
+        .then(res => res.json())
+        .then(data => setClassroomDocs(data))
+        .catch(err => console.error(err));
     }
-    fetchDocs();
   }, [learningData.classroom_id]);
 
-  // 3. Handle Join Classroom
+
+  // 3. Handle Joining
   async function handleJoin() {
-    if (!selectedClassId) return alert("Please select a classroom first.");
+    if (!selectedClassId) return;
+    const token = localStorage.getItem("token");
     try {
-      const token = localStorage.getItem("token");
       const res = await fetch(`http://localhost:8000/classrooms/${selectedClassId}/join`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
-        alert("Successfully joined!");
-        window.location.reload();
+        alert("Joined Successfully!");
+        window.location.reload(); // Simple refresh to update lists
       } else {
-        alert("Failed to join.");
+        alert("Failed to join");
       }
     } catch (err) {
-      alert("Error joining classroom.");
+      alert(err.message);
     }
   }
 
-  // 4. Handle Smart Learning Submission
+  // 4. Handle Smart Learning Request
   async function handleSmartLearning() {
     setLoading(true);
     setGeneratedContent(null);
     const token = localStorage.getItem("token");
-    const headers = { 
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}` 
-    };
 
     try {
-      let url = "";
-      let body = {};
+        let endpoint = "";
+        let body = {};
 
-      if (mode === "chat") {
-        // --- CHAT / GENERATE LESSON MODE ---
-        if (!learningData.topic || !learningData.question) {
-            setLoading(false);
-            return alert("Please provide a topic and question.");
+        if (mode === "chat") {
+            endpoint = "http://localhost:8000/chat/generate_lesson";
+            body = {
+                student_name: user.full_name,
+                student_grade: learningData.grade,
+                student_interest: learningData.interest,
+                topic: learningData.topic,
+                question: learningData.question,
+                classroom_id: learningData.classroom_id
+            };
+        } else {
+            // Document Mode
+            if (!learningData.document_id) {
+                alert("Please select a document");
+                setLoading(false);
+                return;
+            }
+            endpoint = `http://localhost:8000/documents/${learningData.document_id}/personalize`;
+            body = {
+                student_name: user.full_name,
+                student_grade: learningData.grade,
+                student_interest: learningData.interest
+            };
         }
-        url = "http://localhost:8000/chat/generate_lesson";
-        body = {
-          student_name: user.full_name,
-          student_grade: learningData.grade,
-          student_interest: learningData.interest,
-          topic: learningData.topic,
-          question: learningData.question,
-          classroom_id: parseInt(learningData.classroom_id),
-        };
-      } else {
-        // --- PERSONALIZE DOCUMENT MODE ---
-        if (!learningData.document_id) {
-            setLoading(false);
-            return alert("Please select a document to personalize.");
+
+        const res = await fetch(endpoint, {
+            method: "POST",
+            headers: { 
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`
+            },
+            body: JSON.stringify(body)
+        });
+
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || "Generation failed");
         }
-        url = `http://localhost:8000/documents/${learningData.document_id}/personalize`;
-        body = {
-          student_name: user.full_name,
-          student_grade: learningData.grade,
-          student_interest: learningData.interest
-        };
-      }
 
-      const res = await fetch(url, {
-        method: "POST",
-        headers: headers,
-        body: JSON.stringify(body),
-      });
-
-      if (res.ok) {
         const data = await res.json();
-        setGeneratedContent(data); // Expecting { topic, content }
-      } else {
-        const err = await res.json();
-        alert(`Error: ${err.detail}`);
-      }
+        setGeneratedContent(data);
+
     } catch (error) {
-      console.error(error);
-      alert("An error occurred.");
+        alert(error.message);
     } finally {
-      setLoading(false);
+        setLoading(false);
     }
   }
 
   return (
     <div className="home-wrapper">
-      <h2>Welcome, {user.full_name}</h2>
+      <div className="home-header">
+        <h2>Welcome, {user.full_name}</h2>
+        <p className="home-subtitle">Join classrooms and access personalized learning.</p>
+      </div>
 
       <div className="home-grid">
-        {/* Card 1: Join Classrooms */}
+        {/* Card 1: Join Class */}
         <div className="home-card student">
-          <h4>📚 Join Classrooms</h4>
-          <div style={{ marginTop: "1rem" }}>
+          <h4>🏫 Join a Classroom</h4>
+          <div className="join-section">
             <select 
-              value={selectedClassId} 
+              className="full-width"
               onChange={(e) => setSelectedClassId(e.target.value)}
-              style={{ padding: "8px", width: "100%", marginBottom: "8px" }}
+              value={selectedClassId}
             >
-              <option value="">-- Select a Classroom --</option>
+              <option value="">-- Select Classroom --</option>
               {availableClassrooms.map((c) => (
                 <option key={c.id} value={c.id}>{c.name}</option>
               ))}
             </select>
-            <button onClick={handleJoin} className="btn-primary" style={{ width: "100%" }}>
-              Join
-            </button>
+            <button className="btn-primary" onClick={handleJoin}>Join</button>
           </div>
+          <p>Enrolled: {enrolledClassrooms.length} classes</p>
         </div>
 
-        {/* Card 2: Smart Learning (Dual Mode) */}
-        <div className="home-card student" style={{ gridRow: "span 2" }}>
-          <h4>🧠 Smart Learning</h4>
-          <p>Personalized content based on your interests.</p>
-
-          {/* Mode Switcher */}
-          <div style={{ display: "flex", gap: "10px", margin: "10px 0" }}>
+        {/* Card 2: AI Smart Learning */}
+        <div className="home-card student large-card">
+          <h4>🧠 AI Smart Learning</h4>
+          
+          <div className="tabs" style={{marginBottom: "15px", borderBottom: "1px solid #eee"}}>
             <button 
+                className={`tab-btn ${mode === "chat" ? "active" : ""}`} 
                 onClick={() => setMode("chat")}
-                className={mode === "chat" ? "btn-primary" : "btn-secondary"}
-                style={{ flex: 1, fontSize: "0.8rem" }}
             >
-                Ask Question
+                Ask a Question
             </button>
             <button 
+                className={`tab-btn ${mode === "document" ? "active" : ""}`} 
                 onClick={() => setMode("document")}
-                className={mode === "document" ? "btn-primary" : "btn-secondary"}
-                style={{ flex: 1, fontSize: "0.8rem" }}
             >
-                Rewrite Document
+                Personalize Document
             </button>
           </div>
 
-          <div className="form-group" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <div className="chat-form">
+            <div className="form-row">
+              <input 
+                placeholder="Your Grade (e.g. 10th)" 
+                value={learningData.grade}
+                onChange={(e) => setLearningData({...learningData, grade: e.target.value})}
+              />
+              <input 
+                placeholder="Your Interest (e.g. Football)" 
+                value={learningData.interest}
+                onChange={(e) => setLearningData({...learningData, interest: e.target.value})}
+              />
+            </div>
             
-            {/* Common Fields */}
-            <select
-              value={learningData.classroom_id}
-              onChange={(e) => setLearningData({...learningData, classroom_id: e.target.value})}
-              style={{ padding: "8px", borderRadius: "4px" }}
+            {/* Classroom Select is common for context */}
+            <select 
+                className="full-width"
+                value={learningData.classroom_id}
+                onChange={(e) => setLearningData({...learningData, classroom_id: e.target.value})}
             >
-              <option value="">-- Select Your Class --</option>
-              {enrolledClassrooms.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
+                <option value="">-- Select Context Classroom --</option>
+                {enrolledClassrooms.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
             </select>
 
-            <div style={{ display: "flex", gap: "5px" }}>
-                <input 
-                  type="text" placeholder="Grade (e.g. 5th)" 
-                  value={learningData.grade}
-                  onChange={(e) => setLearningData({...learningData, grade: e.target.value})}
-                  style={{ flex: 1, padding: "8px" }}
-                />
-                <input 
-                  type="text" placeholder="Interest (e.g. Lego)" 
-                  value={learningData.interest}
-                  onChange={(e) => setLearningData({...learningData, interest: e.target.value})}
-                  style={{ flex: 1, padding: "8px" }}
-                />
-            </div>
-
-            {/* Mode Specific Fields */}
             {mode === "chat" ? (
                 <>
                     <input 
-                      type="text" placeholder="Topic" 
-                      value={learningData.topic}
-                      onChange={(e) => setLearningData({...learningData, topic: e.target.value})}
-                      style={{ padding: "8px" }}
+                        placeholder="Topic (e.g. Thermodynamics)" 
+                        className="full-width"
+                        value={learningData.topic}
+                        onChange={(e) => setLearningData({...learningData, topic: e.target.value})}
                     />
                     <textarea 
-                      placeholder="What is your question?" 
-                      value={learningData.question}
-                      onChange={(e) => setLearningData({...learningData, question: e.target.value})}
-                      style={{ padding: "8px", minHeight: "60px" }}
+                        placeholder="What is your question?" 
+                        rows="3"
+                        value={learningData.question}
+                        onChange={(e) => setLearningData({...learningData, question: e.target.value})}
                     />
                 </>
             ) : (
                 <>
-                    <select
+                    <select 
+                        className="full-width"
                         value={learningData.document_id}
                         onChange={(e) => setLearningData({...learningData, document_id: e.target.value})}
-                        style={{ padding: "8px", borderRadius: "4px" }}
-                        disabled={!learningData.classroom_id}
                     >
-                        <option value="">
-                            {learningData.classroom_id ? "-- Select Document --" : "-- Select Class First --"}
-                        </option>
+                        <option value="">-- Select Document to Rewrite --</option>
                         {classroomDocs.map((d) => (
                             <option key={d.id} value={d.id}>{d.filename}</option>
                         ))}
@@ -291,6 +270,12 @@ export default function StudentHome({ user }) {
           <button className="btn-secondary" style={{ width: "100%", marginTop: "10px" }}>Coming Soon</button>
         </div>
       </div>
+
+      {/* --- NEW SECTION: Video Generator --- */}
+      <div className="section-container">
+         <VideoGenerator />
+      </div>
+
     </div>
   );
 }

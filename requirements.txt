@@ -16,3 +16,9 @@ python-jose[cryptography]
 pydantic
 python-multipart
 psycopg2-binary
+redis
+rq
+manim
+opencv-python-headless
+numpy
+google-genai

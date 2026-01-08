@@ -2,6 +2,7 @@
 from pydantic import BaseModel, ConfigDict
 from typing import List, Optional, Any
 from enum import Enum
+from datetime import datetime
 
 class UserRole(str, Enum):
     TEACHER = "teacher"
@@ -71,3 +72,18 @@ class PersonalizeRequest(BaseModel):
     student_interest: str
     student_grade: str
     student_name: str
+
+class VideoStatusResponse(BaseModel):
+    job_id: str
+    status: str
+    video_url: Optional[str] = None
+    message: Optional[str] = None
+class GeneratedVideoResponse(BaseModel):
+    id: int
+    job_id: str
+    topic: str
+    status: str
+    created_at: datetime
+    video_url: Optional[str] = None # The temporary link we will generate
+
+    model_config = ConfigDict(from_attributes=True)

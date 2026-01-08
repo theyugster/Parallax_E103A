@@ -1,3 +1,5 @@
+import io
+from pypdf import PdfReader
 import shutil
 import os
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
@@ -28,6 +30,18 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
 from schemas import ChatRequest, GeneratedLessonResponse
+from schemas import GeneratedVideoResponse
+import uuid
+from redis import Redis
+from rq import Queue
+from schemas import VideoStatusResponse
+from worker import process_doc_to_video_task
+from fastapi import File, UploadFile, Form
+REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
+redis_conn = Redis(host=REDIS_HOST, port=REDIS_PORT)
+queue = Queue(connection=redis_conn)
+
 router = APIRouter()
 
 # --- 1. Setup Vector Store (Matches your script) ---
@@ -531,3 +545,117 @@ async def get_available_classrooms(
     enrolled_ids = {c.id for c in current_user.classrooms_enrolled}
     
     return [c for c in all_classrooms if c.id not in enrolled_ids]
+@router.get("/chat/video_status/{job_id}", response_model=VideoStatusResponse)
+async def check_video_status(
+    job_id: str,
+    current_user: models.User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Checks the status of a video generation job.
+    """
+    video_record = db.query(models.GeneratedVideo).filter(models.GeneratedVideo.job_id == job_id).first()
+    if not video_record:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    # If DB says it's done, just generate the URL and return
+    if video_record.status == "completed" and video_record.minio_path:
+        video_record.video_url = minio_client.presigned_get_object(BUCKET_NAME, video_record.minio_path)
+        return video_record
+
+    # If not done, ask Redis what's happening
+    try:
+        job = queue.fetch_job(job_id)
+        if job and job.is_finished:
+            result = job.result
+            if result.get("status") == "success":
+                # UPDATE DB! This makes it permanent.
+                video_record.status = "completed"
+                video_record.minio_path = result["minio_path"]
+                db.commit()
+                
+                # Generate URL
+                video_record.video_url = minio_client.presigned_get_object(BUCKET_NAME, result["minio_path"])
+            else:
+                video_record.status = "failed"
+                db.commit()
+    except Exception as e:
+        print(f"Error syncing job: {e}")
+
+    return video_record
+@router.post("/generate/from-doc")
+async def generate_from_doc(
+    file: UploadFile = File(None),
+    text: str = Form(None),
+    current_user: models.User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Upload a text/tex file OR provide a raw string.
+    The system will extract math, convert to LaTeX, and generate a video.
+    """
+    job_id = str(uuid.uuid4())
+    content = ""
+
+    # 1. Extract content
+    if file:
+        topic_name = file.filename
+        file_bytes = await file.read()
+        if file.filename.endswith(".pdf"):
+            try:
+                # Wrap bytes in a memory stream so pypdf can read it
+                pdf_stream = io.BytesIO(file_bytes)
+                reader = PdfReader(pdf_stream)
+                # Extract text from all pages
+                content = "\n".join([page.extract_text() for page in reader.pages])
+                print(f"✅ Extracted {len(content)} characters from PDF.")
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Invalid PDF: {str(e)}")
+        else:
+            # Fallback for .txt or .tex files
+            content = file_bytes.decode("utf-8", errors="ignore")
+    elif text:
+        topic_name = text[:30] + "..."
+        content = text
+    else:
+        raise HTTPException(status_code=400, detail="Must provide file or text.")
+
+    if not content.strip():
+        raise HTTPException(status_code=400, detail="Content is empty.")
+
+    # 2. Enqueue the new specific task using enqueue_call so args are passed positionally
+    job = queue.enqueue_call(
+        func='worker.process_doc_to_video_task',
+        args=(content, job_id),
+        job_id=job_id,
+        timeout=600,
+    )
+
+    new_video = models.GeneratedVideo(
+        job_id=job_id,
+        topic=topic_name,
+        status="queued",
+        user_id=current_user.id
+    )
+    db.add(new_video)
+    db.commit()
+    db.refresh(new_video)
+
+    return new_video
+@router.get("/videos/mine", response_model=List[GeneratedVideoResponse])
+async def get_my_videos(
+    current_user: models.User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    # Fetch all videos for this student
+    videos = db.query(models.GeneratedVideo).filter(
+        models.GeneratedVideo.user_id == current_user.id
+    ).order_by(models.GeneratedVideo.created_at.desc()).all()
+
+    # Generate fresh URLs for every completed video
+    for v in videos:
+        if v.status == "completed" and v.minio_path:
+            # This generates a link valid for 7 days (default)
+            v.video_url = minio_client.presigned_get_object(BUCKET_NAME, v.minio_path)
+    
+    return videos

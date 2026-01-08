@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react"; // Import useEffect
 import Landing from "./components/Landing";
 import Login from "./components/Login";
 import Signup from "./components/Signup";
@@ -9,6 +9,34 @@ import Navbar from "./components/Navbar";
 export default function App() {
   const [page, setPage] = useState("landing");
   const [user, setUser] = useState(null);
+
+  // 1. Check for token on application load
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    if (token) {
+      fetch("http://localhost:8000/users/me/", {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+        .then((res) => {
+          if (!res.ok) throw new Error("Token invalid");
+          return res.json();
+        })
+        .then((userData) => {
+          setUser(userData); // Restore the user state
+        })
+        .catch(() => {
+          localStorage.removeItem("token"); // Clear invalid token
+          setUser(null);
+        });
+    }
+  }, []);
+
+  // 2. Update logout to actually remove the token
+  const handleLogout = () => {
+    localStorage.removeItem("token");
+    setUser(null);
+    setPage("landing");
+  };
 
   if (!user) {
     if (page === "landing")
@@ -34,7 +62,8 @@ export default function App() {
 
   return (
     <>
-      <Navbar user={user} onLogout={() => setUser(null)} />
+      {/* Pass the new handleLogout function */}
+      <Navbar user={user} onLogout={handleLogout} />
       {user.role === "teacher" ? (
         <TeacherHome user={user} />
       ) : (
