@@ -46,8 +46,8 @@ A full-stack application featuring a FastAPI backend for document management, RA
     DATABASE_URL=postgresql://user:password@localhost/dbname
     SECRET_KEY=your_jwt_secret_key
     MINIO_ENDPOINT=localhost:9000
-    MINIO_ACCESS_KEY=minioadmin
-    MINIO_SECRET_KEY=minioadmin
+    MINIO_ACCESS_KEY=username
+    MINIO_SECRET_KEY=password
     GOOGLE_API_KEY=your_gemini_api_key
     ```
 4.  **Run Migrations**:
@@ -56,7 +56,7 @@ A full-stack application featuring a FastAPI backend for document management, RA
     ```
 5.  **Start the Server**:
     ```bash
-    fastapi dev main.py
+    uvicorn main:app --reload
     ```
 
 ### 3. Frontend Setup
@@ -68,13 +68,6 @@ A full-stack application featuring a FastAPI backend for document management, RA
 
 The backend provides an interactive Swagger UI documentation at:  
 `http://localhost:8000/docs`
-
-### Key Endpoints:
-* `POST /signup`: Register a new user.
-* `POST /token`: Login to receive a JWT token.
-* `POST /classrooms/`: Create a new classroom.
-* `POST /documents/upload`: Upload and process a document into the AI vector store.
-* `POST /chat`: Query your documents using AI.
 
 ## 📁 Project Structure
 ```text
